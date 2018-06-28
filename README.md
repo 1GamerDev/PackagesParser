@@ -1,2 +1,2 @@
 # PackagesParser
-parses "Packages" and "Release" files.  written in php.
+kinda similar to s0n1c.org/cydia, but open source
