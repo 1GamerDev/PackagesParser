@@ -2,8 +2,31 @@
 //  PackagesParser.php
 //  Written by 1GamerDev in 2018
 //  This script parses both "Packages" and "Release" files.
-//  Beta 1
+//  Beta 2
 header("Content-Type: text/text");
+set_time_limit(0);
+error_reporting(0);
+function get_file_contents($url) {
+	$request = curl_init();
+  	curl_setopt($request, CURLOPT_URL, $url);
+	curl_setopt($request, CURLOPT_HTTPHEADER, array(
+	    'X-Unique-ID: ABCDEF1234567890ABCDEF1234567890ABCDEF12',
+   		'User-Agent: Telesphoreo APT-HTTP/1.0.592',
+  	 	'X-Firmware: 12.0.0',
+ 		'X-Machine: iPhone10,3'
+	));
+	curl_setopt($request, CURLOPT_RETURNTRANSFER, 1);
+	curl_setopt($request, CURLOPT_VERBOSE, 1);
+	curl_setopt($request, CURLOPT_HEADER, 1);
+	curl_setopt($request, CURLOPT_FOLLOWLOCATION, true);
+	$response = curl_exec($request);
+	$header_size = curl_getinfo($request, CURLINFO_HEADER_SIZE);
+	$header = substr($response, 0, $header_size);
+	$body = substr($response, $header_size);
+	$retcode = curl_getinfo($request, CURLINFO_HTTP_CODE);
+	curl_close($request);
+	return $body;
+}
 function startsWith($haystack, $needle) {
     return (substr($haystack, 0, strlen($needle)) === $needle);
 }
@@ -11,15 +34,30 @@ function endsWith($haystack, $needle) {
     return strlen($needle) === 0 || (substr($haystack, - strlen($needle)) === $needle);
 }
 function exists($url) {
-	$ch = curl_init($url);
-	curl_setopt($ch, CURLOPT_NOBODY, true);
-	curl_exec($ch);
-	$retcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-	curl_close($ch);
+	$request = curl_init();
+  	curl_setopt($request, CURLOPT_URL, $url);
+	curl_setopt($request, CURLOPT_HTTPHEADER, array(
+	    'X-Unique-ID: ABCDEF1234567890ABCDEF1234567890ABCDEF12',
+   		'User-Agent: Telesphoreo APT-HTTP/1.0.592',
+  	 	'X-Firmware: 12.0.0',
+ 		'X-Machine: iPhone10,3'
+	));
+	curl_setopt($request, CURLOPT_RETURNTRANSFER, 1);
+	curl_setopt($request, CURLOPT_VERBOSE, 1);
+	curl_setopt($request, CURLOPT_HEADER, 1);
+	curl_setopt($request, CURLOPT_FOLLOWLOCATION, true);
+	$response = curl_exec($request);
+	$header_size = curl_getinfo($request, CURLINFO_HEADER_SIZE);
+	$header = substr($response, 0, $header_size);
+	$body = substr($response, $header_size);
+	$retcode = curl_getinfo($request, CURLINFO_HTTP_CODE);
+	curl_close($request);
 	if ($retcode >= 400) {
 		return false;
 	}
-	return true;
+	if (preg_match('/^Location: (.+)$/im', $response, $matches))
+        return trim($matches[1]);
+	return $url;
 }
 function splitAt($str0, $str1) {
 	if (strpos($str0, $str1) === false) {
@@ -49,7 +87,11 @@ function packagesToArray($packages) {
 	}
 	return $arr;
 }
-function splitPackages($packages) {
+function splitPackages($packages, $__url) {
+	$fullURL = false;
+	if (isset($_GET["packagesFullURL"])) {
+		$fullURL = true;
+	}
 	$prev = "";
 	for ($i = 0; $i < count($packages); $i++) {
 		$a = explode("\n", $packages[$i]);
@@ -62,7 +104,14 @@ function splitPackages($packages) {
 			}
 			if ($arr_ !== false) {
 				$prev = $arr_[0];
-				$arr[trim($arr_[0])] = trim($arr_[1]);
+				$keyName = strtolower(trim($arr_[0]));
+				$keyValue = trim($arr_[1]);
+				if ($fullURL && $keyName == "filename" && strpos($keyValue, "://") === false) {
+					$keyValue = $__url . "/" . $keyValue;
+				} else if ($fullURL && $keyName == "filename" && strpos($keyValue, "//") === 0) {
+					$keyValue = "http:" . $keyValue;
+				}
+				$arr[$keyName] = $keyValue;
 			}
 		}
 		$packages[$i] = $arr;
@@ -111,11 +160,20 @@ function splitRelease($release) {
 	foreach ($release_ as &$str) {
 		if (strpos($str, "\n") !== false) {
 			$str = splitAt_a($str, "\n");
+			for ($i = 0; $i < count($str); $i++) {
+				$str[$i] = trim($str[$i]);
+			}
 		}
 	}
 	return $release_;
 }
 $finalJSON = [];
+function vp($str) {
+	return $str !== false && (endsWith(strtolower($str), strtolower("/Packages")) || endsWith(strtolower($str), strtolower("/Packages.gz")) || endsWith(strtolower($str), strtolower("/Packages.bz2")));
+}
+function vr($str) {
+	return $str !== false && endsWith(strtolower($str), strtolower("/Release"));
+}
 function packages($__packages) {
 	$url = $__packages;
 	$find = false;
@@ -136,46 +194,105 @@ function packages($__packages) {
 		return "[ERROR] Possible path traversal attack detected.";
 	}
 	if ($find) {
-		$_url = false;
-		if (endsWith($lowerurl, "/packages.bz2")) {
-			$_url = true;
-		} else if (endsWith($lowerurl, "/packages.gz")) {
-			$_url = true;
-		} else if (endsWith($lowerurl, "/packages")) {
-			$_url = true;
+		$found = false;
+		$f0 = "/Packages";
+		$f1 = "/Packages.gz";
+		$f2 = "/Packages.bz2";
+		$f3 = "/dists/stable/main/binary-iphoneos-arm/Packages";
+		$f4 = "/dists/stable/main/binary-iphoneos-arm/Packages.gz";
+		$f5 = "/dists/stable/main/binary-iphoneos-arm/Packages.bz2";
+		$e0 = "";
+		$e1 = "";
+		$e2 = "";
+		$e3 = "";
+		$e4 = "";
+		$e5 = "";
+		$e6 = "";
+		if (vp($lowerurl)) {
+			$str = $url;
+			$e = $e0;
+
+			$e = exists($str);
+			if (vp($e)) {
+				$found = true;
+			}
 		}
-		if (!$_url) {
-			$_url = exists($url . "/Packages");
+		if (!$found) {
+			$str = $url . $f0;
+			$e = $e1;
+
+			$e = exists($str);
+			if (vp($e)) {
+				$found = true;
+				$url = $str;
+				$lowerurl = strtolower($url);
+			}
 		}
-		if (!$_url) {
-			$_url = exists($url . "/Packages.bz2");
+		if (!$found) {
+			$str = $url . $f1;
+			$e = $e2;
+
+			$e = exists($str);
+			if (vp($e)) {
+				$found = true;
+				$url = $str;
+				$lowerurl = strtolower($url);
+			}
 		}
-		if (!$_url) {
-			$_url = exists($url . "/Packages.gz");
+		if (!$found) {
+			$str = $url . $f2;
+			$e = $e3;
+
+			$e = exists($str);
+			if (vp($e)) {
+				$found = true;
+				$url = $str;
+				$lowerurl = strtolower($url);
+			}
 		}
-		if (!$_url) {
-			$_url = exists($url . "/dists/stable/main/binary-iphoneos-arm/Packages");
+		if (!$found) {
+			$str = $url . $f3;
+			$e = $e4;
+
+			$e = exists($str);
+			if (vp($e)) {
+				$found = true;
+				$url = $str;
+				$lowerurl = strtolower($url);
+			}
 		}
-		if (!$_url) {
-			$_url = exists($url . "/dists/stable/main/binary-iphoneos-arm/Packages.bz2");
+		if (!$found) {
+			$str = $url . $f4;
+			$e = $e5;
+
+			$e = exists($str);
+			if (vp($e)) {
+				$found = true;
+				$url = $str;
+				$lowerurl = strtolower($url);
+			}
 		}
-		if (!$_url) {
-			$_url = exists($url . "/dists/stable/main/binary-iphoneos-arm/Packages.gz");
+		if (!$found) {
+			$str = $url . $f5;
+			$e = $e6;
+
+			$e = exists($str);
+			if (vp($e)) {
+				$found = true;
+				$url = $str;
+				$lowerurl = strtolower($url);
+			}
 		}
-		if ($_url) {
-			$url = $_url;
-		} else {
+		if (!$found) {
 			return "[ERROR] Unable to find the Packages file.";
 		}
-	} else {
-		if (!exists($url)) {
-			return "[ERROR] Unable to find the Packages file.";
-		}
+	} else if (!exists($url)) {
+		return "[ERROR] Unable to find the Packages file.";
 	}
 	$file = "";
 	if (endsWith($lowerurl, "/packages.bz2")) {
 		$random = rand();
-		$content = @file_get_contents($url);
+		$content = @get_file_contents($url);
 		if ($content === false) {
 			return "[ERROR] Unable to find the Packages file.";
 		}
@@ -188,7 +305,7 @@ function packages($__packages) {
 		bzclose($bz2);
 	} else if (endsWith($lowerurl, "/packages.gz")) {
 		$random = rand();
-		$content = @file_get_contents($url);
+		$content = @get_file_contents($url);
 		if ($content === false) {
 			return "[ERROR] Unable to find the Packages file.";
 		}
@@ -200,16 +317,18 @@ function packages($__packages) {
 		}
 		gzclose($gz);
 	} else if (endsWith($lowerurl, "/packages")) {
-		$content = @file_get_contents($url);
+		$content = @get_file_contents($url);
 		if ($content === false) {
 			return "[ERROR] Unable to find the Packages file.";
 		}
 		$file = $content;
-	} else {
+	} else if (!$find) {
 		return "[ERROR] The URL doesn't look like it points a Packages file.";
 	}
+	$file = preg_replace('/[\x00-\x08\x10\x0B\x0C\x0E-\x19\x7F]|[\x00-\x7F][\x80-\xBF]+|([\xC0\xC1]|[\xF0-\xFF])[\x80-\xBF]*|[\xC2-\xDF]((?![\x80-\xBF])|[\x80-\xBF]{2,})|[\xE0-\xEF](([\x80-\xBF](?![\x80-\xBF]))|(?![\x80-\xBF]{2})|[\x80-\xBF]{3,})/S', '?', $file);
+	$file = preg_replace('/\xE0[\x80-\x9F][\x80-\xBF]|\xED[\xA0-\xBF][\x80-\xBF]/S','?', $file);
 	$packages = packagesToArray($file);
-	$packages = splitPackages($packages);
+	$packages = splitPackages($packages, dirname($url));
 	return $packages;
 }
 function release($__release) {
@@ -219,7 +338,6 @@ function release($__release) {
 		$find = true;
 	}
 	$lowerurl = strtolower($url);
-	echo $url;
 	if (strpos($url, "..") !== false) {
 		return "[ERROR] Possible path traversal attack detected.";
 	}
@@ -233,33 +351,61 @@ function release($__release) {
 		return "[ERROR] Possible path traversal attack detected.";
 	}
 	if ($find) {
-		$_url = false;
-		if (endsWith($lowerurl, "/release")) {
-			$_url = true;
+		$found = false;
+		$f0 = "/Release";
+		$f1 = "/dists/stable/Release";
+		$e0 = "";
+		$e1 = "";
+		$e2 = "";
+		if (vr($lowerurl)) {
+			$str = $url;
+			$e = $e0;
+
+			$e = exists($str);
+			if (vr($e)) {
+				$found = true;
+			}
 		}
-		if (!$_url) {
-			$_url = exists($url . "/Release");
+		if (!$found) {
+			$str = $url . $f0;
+			$e = $e1;
+
+			$e = exists($str);
+			if (vr($e)) {
+				$found = true;
+				$url = $str;
+				$lowerurl = strtolower($url);
+			}
 		}
-		if ($_url) {
-			$url = $_url;
-		} else {
+		if (!$found) {
+			$str = $url . $f1;
+			$e = $e2;
+
+			$e = exists($str);
+			if (vr($e)) {
+				$found = true;
+				$url = $str;
+				$lowerurl = strtolower($url);
+			}
+		}
+		if (!$found) {
 			return "[ERROR] Unable to find the Release file.";
 		}
-	} else {
-		if (!exists($url)) {
-			return "[ERROR] Unable to find the Release file.";
-		}
+	} else if (!exists($url)) {
+		return "[ERROR] Unable to find the Release file.";
 	}
 	$file = "";
 	if (endsWith($lowerurl, "/release")) {
-		$content = @file_get_contents($url);
+		$content = @get_file_contents($url);
 		if ($content === false) {
-			return "[ERROR] Unable to find the Packages file.";
+			return "[ERROR] Unable to find the Release file.";
 		}
 		$file = $content;
-	} else {
+	} else if (!$find) {
 		return "[ERROR] The URL doesn't look like it points a Release file.";
 	}
+	$file = preg_replace('/[\x00-\x08\x10\x0B\x0C\x0E-\x19\x7F]|[\x00-\x7F][\x80-\xBF]+|([\xC0\xC1]|[\xF0-\xFF])[\x80-\xBF]*|[\xC2-\xDF]((?![\x80-\xBF])|[\x80-\xBF]{2,})|[\xE0-\xEF](([\x80-\xBF](?![\x80-\xBF]))|(?![\x80-\xBF]{2})|[\x80-\xBF]{3,})/S', '?', $file);
+	$file = preg_replace('/\xE0[\x80-\x9F][\x80-\xBF]|\xED[\xA0-\xBF][\x80-\xBF]/S','?', $file);
 	$release = splitReleaseToArray($file);
 	$release = splitRelease($release);
 	return $release;
@@ -329,10 +475,12 @@ if (isset($_GET["release"])) {
 }
 $search = [];
 if (isset($_GET["search"]) && isset($_GET["packages"])) {
+	$searchArr = [];
 	$searchFor = "Name";
 	if (isset($_GET["searchFor"])) {
 		$searchFor = $_GET["searchFor"];
 	}
+	$searchFor = strtolower($searchFor);
 	if (gettype($_GET["search"]) == "string") {
 		for ($i = 0; $i < count($pkgarr); $i++) {
 			if (isset($pkgarr[$i])) {
@@ -343,7 +491,7 @@ if (isset($_GET["search"]) && isset($_GET["packages"])) {
 						if (isset($pk[$searchFor])) {
 							if (startsWith(strtolower($pk[$searchFor]), strtolower($_GET["search"]))) {
     							if (!in_array($pk, $search)) {
-    								$search[count($search)] = $pk;
+    								$searchArr[$_GET["search"]][count($searchArr[$_GET["search"]])] = $pk;
     							}
     						}
     					}
@@ -351,6 +499,7 @@ if (isset($_GET["search"]) && isset($_GET["packages"])) {
 				}
 			}
 		}
+		$search = $searchArr;
 		$finalJSON["search"] = $search;
 	} else {
 		for ($i = 0; $i < count($pkgarr); $i++) {
@@ -363,7 +512,7 @@ if (isset($_GET["search"]) && isset($_GET["packages"])) {
 							if (isset($pk[$searchFor])) {
 								if (startsWith(strtolower($pk[$searchFor]), strtolower($_GET["search"][$iii]))) {
     								if (!in_array($pk, $search)) {
-    									$search[count($search)] = $pk;
+    									$searchArr[$_GET["search"][$iii]][count($searchArr[$_GET["search"][$iii]])] = $pk;
     								}
     							}
     						}
@@ -372,6 +521,7 @@ if (isset($_GET["search"]) && isset($_GET["packages"])) {
 				}
 			}
 		}
+		$search = $searchArr;
 		$finalJSON["search"] = $search;
 	}
 }
